@@ -613,16 +613,35 @@ else
   note "skipped (needs root)"
 fi
 
-# functions a webshell needs to run server commands; Laravel needs proc_open, so it is not in the list
-# ponytail: reads each version's CLI config; a per-domain PHP-FPM pool override is not seen
+# functions a webshell needs to run server commands; Laravel needs proc_open, so it is not in the list.
+# Websites run on PHP-FPM, whose pools must disable them. The CLI php.ini (artisan, tinker) keeps them on purpose.
+SHELL_FN="exec system shell_exec passthru popen"
 ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1 && sub "PHP settings (each installed cPanel PHP version)"
+ls /opt/cpanel/ea-php*/root/etc/php-fpm.d/*.conf > "$TMP/pools" 2>/dev/null
+if [ -s "$TMP/pools" ]; then
+  : > "$TMP/fpm"
+  while IFS= read -r p; do
+    d=$(grep -h '^php_admin_value\[disable_functions\]' "$p" | cut -d= -f2 | tr -d ' ')
+    miss=""; for f in $SHELL_FN; do case ",$d," in *",$f,"*) ;; *) miss="$miss $f";; esac; done
+    [ -n "$miss" ] && echo "$(echo "$p" | grep -oE 'ea-php[0-9]+') $(basename "$p" .conf):$miss" >> "$TMP/fpm"
+  done < "$TMP/pools"
+  if [ -s "$TMP/fpm" ]; then
+    warn "website PHP-FPM pools still allow shell functions - add them in WHM > MultiPHP Manager > System PHP-FPM Settings > Disable Functions (keep proc_open):"
+    indent < "$TMP/fpm"
+  else ok "all $(wc -l < "$TMP/pools") website PHP-FPM pools disable $SHELL_FN"; fi
+elif [ $IS_ROOT -eq 0 ] && ls -d /opt/cpanel/ea-php*/root/etc/php-fpm.d >/dev/null 2>&1; then
+  note "PHP-FPM pool settings need root to read - website shell-function check skipped"
+fi
+# a domain not on PHP-FPM runs through the version's php.ini, where the functions are usually enabled
+if [ $IS_ROOT -eq 1 ] && have whmapi1; then
+  whmapi1 php_get_vhost_versions 2>/dev/null | tr -d "'\"" | awk '$1=="php_fpm:" {f=$2} $1=="vhost:" {if (f!=1) print $2; f=""}' > "$TMP/nofpm"
+  [ -s "$TMP/nofpm" ] && { warn "domain(s) not on PHP-FPM (they use php.ini, shell functions likely enabled) - switch them in WHM > MultiPHP Manager:"; indent < "$TMP/nofpm"; }
+fi
 for phpb in /opt/cpanel/ea-php*/root/usr/bin/php; do
   [ -x "$phpb" ] || continue
   pv=$(echo "$phpb" | grep -oE 'ea-php[0-9]+')
-  r=$("$phpb" -r '$o=[]; foreach(["exec","system","shell_exec","passthru","popen"] as $f) if (function_exists($f)) $o[]=$f;
-      echo implode(" ",$o), "|", ini_get("expose_php"), "|", ini_get("allow_url_include");' 2>/dev/null) || continue
-  IFS='|' read -r en ex au <<< "$r"
-  [ -n "$en" ] && warn "$pv: $en enabled - add them to disable_functions (WHM > MultiPHP INI Editor), keep proc_open" || ok "$pv: shell functions disabled"
+  r=$("$phpb" -r 'echo ini_get("expose_php"), "|", ini_get("allow_url_include");' 2>/dev/null) || continue
+  IFS='|' read -r ex au <<< "$r"
   case "${ex,,}" in 1|on) warn "$pv: expose_php is On - set it Off";; esac
   case "${au,,}" in 1|on) bad "$pv: allow_url_include is On - set it Off";; esac
 done
