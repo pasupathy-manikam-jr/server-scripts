@@ -581,6 +581,27 @@ if [ $IS_ROOT -eq 1 ]; then
     else n=""; fi
     if [ -n "$n" ]; then [ "$n" -gt 0 ] && warn "$n security update(s) pending for the operating system" || ok "no pending OS security updates"; fi
   fi
+
+  # WHM backups: .env and uploaded files (storage/app) exist only on this server, git and the database snapshots do not cover them
+  if have whmapi1; then
+    whmapi1 backup_config_get 2>/dev/null | tr -d "'\"" > "$TMP/bk"
+    if grep -qE '^[[:space:]]*backupenable:[[:space:]]*1' "$TMP/bk"; then
+      ok "WHM backups are enabled"
+      bdir=$(awk '$1=="backupdir:" {print $2; exit}' "$TMP/bk")
+      # ponytail: newest entry up to 3 levels deep stands in for "last backup run"; incremental backups that only rewrite deeper files may look older
+      last=$(find "${bdir:-/backup}" -mindepth 1 -maxdepth 3 -printf '%T@\n' 2>/dev/null | sort -n | tail -n1)
+      if [ -z "$last" ]; then bad "no backup files found in ${bdir:-/backup}"
+      else
+        age=$(( ($(date +%s) - ${last%.*}) / 86400 ))
+        [ "$age" -le 2 ] && ok "last backup written $age day(s) ago in ${bdir:-/backup}" || bad "last backup is $age days old (${bdir:-/backup}) - the backup job has stopped"
+      fi
+      n=$(whmapi1 backup_destination_list 2>/dev/null | tr -d "'\"" | grep -cE '^[[:space:]]*disabled:[[:space:]]*0' || true)
+      [ "$n" -gt 0 ] && ok "$n off-server backup destination(s) enabled" \
+        || bad "backups are kept only on this server - add an off-server copy (WHM > Backup Configuration > Additional Destinations)"
+    else bad "WHM backups are disabled - .env files and uploaded files (storage/app) are not backed up anywhere"; fi
+    grep -sHE 'storage|\.env' /etc/cpbackup-exclude.conf /home/*/cpbackup-exclude.conf > "$TMP/bkx"
+    [ -s "$TMP/bkx" ] && { warn "backup exclude list skips app files (storage or .env):"; indent < "$TMP/bkx"; }
+  fi
 else
   note "skipped (needs root)"
 fi
