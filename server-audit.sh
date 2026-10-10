@@ -257,6 +257,21 @@ audit_app() {
     head -n 15 "$TMP/f1" | indent
   else ok "no stray PHP files in storage/ or public/"; fi
 
+  # upload folders must refuse to run PHP, so an uploaded webshell returns 403 instead of executing
+  if [ -d "$app/public" ]; then
+    { [ -d "$app/public/storage" ] && echo "$app/public/storage"
+      find "$app/public" -mindepth 1 -maxdepth 2 -type d -regextype posix-extended \
+        -iregex '.*/(uploads?|files|media|attachments)' 2>/dev/null; } > "$TMP/f5"
+    : > "$TMP/f6"
+    while IFS= read -r d; do
+      grep -qiE 'engine[[:space:]]+off|FilesMatch[^>]*ph' "$d/.htaccess" 2>/dev/null || echo "$d" >> "$TMP/f6"
+    done < "$TMP/f5"
+    if [ -s "$TMP/f6" ]; then
+      warn "upload folder(s) can run PHP - add a .htaccess with: <FilesMatch \"\\.(php|phtml|phar)\$\"> Require all denied </FilesMatch>"
+      indent < "$TMP/f6"
+    elif [ -s "$TMP/f5" ]; then ok "upload folders block PHP"; fi
+  fi
+
   scan_backdoor "$app"
 
   # things that should never sit in the web root
