@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # server-audit.sh  -  read-only log, security and capacity audit
-# For: WHM/cPanel server  hosting several Laravel apps,
-#      database.
+# For: WHM/cPanel cloud server hosting several Laravel apps,
+#      database on ApsaraDB RDS.
 #
 # It only READS files and makes a few HTTPS requests to your own domains.
 # It never changes, deletes, blocks or installs anything.
@@ -76,6 +76,9 @@ if [ "$DAYS" != "all" ]; then
     date -d "-$i day" +'[%a %b %d ' >> "$TMP/d_aperr"     # Apache error log
   done
 fi
+# files last written before the window started cannot hold entries from it, so they are never opened
+NEWER=()
+[ "$DAYS" != "all" ] && NEWER=(-newermt "$(date -d "-$((DAYS-1)) day" +%Y-%m-%d) 00:00:00")
 datefilter() {  # $1 = pattern file ; passes everything when DAYS=all
   if [ "$DAYS" = "all" ]; then cat; else grep -F -f "$1" || true; fi
 }
@@ -149,14 +152,14 @@ audit_app() {
   # ---- 1a. log files --------------------------------------------------------
   local logdir="$app/storage/logs"
   if [ -d "$logdir" ]; then
-    local nfiles size
+    local nfiles size nread
     nfiles=$(find "$logdir" -type f -name '*.log' 2>/dev/null | wc -l)
+    nread=$(find "$logdir" -type f -name '*.log' "${NEWER[@]}" 2>/dev/null | wc -l)
     size=$(du -sm "$logdir" 2>/dev/null | awk '{print $1}')
-    note "storage/logs: $nfiles log file(s), ${size:-0} MB"
-    [ "${size:-0}" -gt 1024 ] && warn "storage/logs is over 1 GB - switch LOG_CHANNEL to 'daily' and set a retention (LOG_DAILY_DAYS)"
+    note "storage/logs: $nfiles log file(s), ${size:-0} MB - $nread written to in the window and read, $((nfiles-nread)) older file(s) not opened"
 
     # header lines only: "[2026-10-10 13:55:01] production.ERROR: message ..."
-    find "$logdir" -type f -name '*.log' -print0 2>/dev/null \
+    find "$logdir" -type f -name '*.log' "${NEWER[@]}" -print0 2>/dev/null \
       | xargs -0 -r grep -ahE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+-]+\] [A-Za-z0-9_-]+\.[A-Z]+:' 2>/dev/null \
       | datefilter "$TMP/d_iso" > "$lv"
     cat "$lv" >> "$TMP/lv_all"
