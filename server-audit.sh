@@ -294,6 +294,17 @@ audit_app() {
     fi
   fi
 
+  # files that differ from the last git pull (git compares content, so a faked file date does not hide a change)
+  # GIT_OPTIONAL_LOCKS=0 stops git status from rewriting .git/index, keeping the run read-only
+  if have git && [ -d "$app/.git" ]; then
+    GIT_OPTIONAL_LOCKS=0 git -c safe.directory="$app" -C "$app" status --porcelain 2>/dev/null > "$TMP/f7"
+    apply_ignore "$TMP/f7"
+    if [ -s "$TMP/f7" ]; then
+      warn "$(wc -l < "$TMP/f7") file(s) differ from the last git pull (M = edited on the server, ?? = not in git) - commit them or remove them:"
+      head -n 20 "$TMP/f7" | indent
+    else ok "code matches the last git pull"; fi
+  else note "not a git checkout - change detection skipped"; fi
+
   # known-vulnerable packages
   if have composer && [ -f "$app/composer.lock" ]; then
     if COMPOSER_ALLOW_SUPERUSER=1 timeout 60 composer audit --locked --no-interaction -d "$app" > "$TMP/ca" 2>&1; then
