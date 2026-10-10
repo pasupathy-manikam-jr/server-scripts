@@ -337,7 +337,7 @@ ACC="$TMP/acc"; : > "$ACC"
 LOGDIR="${ACCESS_LOG_DIR:-}"
 if [ -z "$LOGDIR" ]; then
   for d in /usr/local/apache/domlogs /etc/apache2/logs/domlogs /var/log/apache2/domlogs "$HOME/access-logs"; do
-    [ -d "$d" ] && { LOGDIR="$d"; break; }
+    [ -d "$d" ] && [ -r "$d" ] && { LOGDIR="$d"; break; }
   done
 fi
 
@@ -403,7 +403,14 @@ if [ "$TOTAL" -gt 0 ]; then
   else ok "no IP exceeded $LOGIN_THRESHOLD login POSTs"; fi
 
   sub "Worst offenders overall (candidates for a firewall block)"
-  grep -aiE -- "$P_SQLI|$P_LFI|$P_EXPL|$P_RCE|$P_SCAN|/\.env|/\.git/" "$ACC" | awk '{print $2}' | top 15 | indent
+  grep -aiE -- "$P_SQLI|$P_LFI|$P_EXPL|$P_RCE|$P_SCAN|/\.env|/\.git/" "$ACC" > "$TMP/offl"
+  awk '{print $2}' "$TMP/offl" | top 15 > "$TMP/off"
+  [ -s "$TMP/off" ] && out "         (requests, IP - then what it tried: count, HTTP status, domain+path, first 100 chars)"
+  while read -r n ip; do
+    out "$(printf '         %6s  %s  %s' "$n" "$ip" "$(awk -v ip="$ip" '$2==ip {p[$1 $8]; s[$10]++}
+      END {for (k in s) st = st " " k ":" s[k]; printf "(%d different paths; status%s)", length(p), st}' "$TMP/offl")")"
+    awk -v ip="$ip" '$2==ip {print $10, $1 substr($8,1,100)}' "$TMP/offl" | top 5 | sed 's/^/        /' | indent
+  done < "$TMP/off"
 
   sub "Server errors (5xx) by URL"
   awk '$10>=500 {sub(/\?.*/,"",$8); print $10, $1, $8}' "$ACC" | top 10 > "$TMP/e5"
