@@ -402,7 +402,7 @@ if [ "$TOTAL" -gt 0 ]; then
     warn "IPs with $LOGIN_THRESHOLD+ login POSTs (count, IP, domain) - an office or carrier NAT can be legitimate:"; indent < "$TMP/bf"
   else ok "no IP exceeded $LOGIN_THRESHOLD login POSTs"; fi
 
-  sub "Worst offenders overall (candidates for a firewall block)"
+  sub "Most active scanners (403/404 = already blocked, no action needed; act only on 200 or login floods)"
   grep -aiE -- "$P_SQLI|$P_LFI|$P_EXPL|$P_RCE|$P_SCAN|/\.env|/\.git/" "$ACC" > "$TMP/offl"
   awk '{print $2}' "$TMP/offl" | top 15 > "$TMP/off"
   [ -s "$TMP/off" ] && out "         (requests, IP - then what it tried: count, HTTP status, domain+path, first 100 chars)"
