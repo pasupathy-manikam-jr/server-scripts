@@ -2,7 +2,7 @@
 # =============================================================================
 # server-audit.sh  -  read-only log, security and capacity audit
 # For: WHM/cPanel cloud server hosting several Laravel apps,
-#      database on ApsaraDB RDS.
+#      database on a managed cloud database service.
 #
 # It only READS files and makes a few HTTPS requests to your own domains.
 # It never changes, deletes, blocks or installs anything.
@@ -194,7 +194,7 @@ audit_app() {
     sig "Rate limiter hits (Too Many Attempts) - possible brute force" 'ThrottleRequestsException|Too Many (Attempts|Requests)' note
     sig "CSRF token mismatches" 'TokenMismatchException|CSRF token mismatch' note
     sig "Authorization denials" 'AuthorizationException|action is unauthorized|AccessDeniedHttpException' note
-    sig "Database connection failures (RDS unreachable / too many connections)" 'SQLSTATE\[HY000\] \[(1040|1045|2002|2006)\]|Too many connections|server has gone away|Connection (refused|timed out)' warn
+    sig "Database connection failures (database unreachable / too many connections)" 'SQLSTATE\[HY000\] \[(1040|1045|2002|2006)\]|Too many connections|server has gone away|Connection (refused|timed out)' warn
     sig "PHP memory or time limit exhausted" 'Allowed memory size|Maximum execution time' warn
     sig "Disk full / write failures" 'No space left on device|failed to open stream: Permission denied' warn
 
@@ -224,7 +224,7 @@ audit_app() {
       if echo "${ip:-}" | grep -qE '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|127\.)'; then
         ok "DB_HOST resolves to a private/intranet address"
       elif [ -n "${ip:-}" ]; then
-        warn "DB_HOST resolves to a PUBLIC address - use the RDS intranet (VPC) endpoint, or require SSL"
+        warn "DB_HOST resolves to a PUBLIC address - use the database private (VPC) endpoint, or require SSL"
         grep -qE '^[[:space:]]*MYSQL_ATTR_SSL_CA=.+' "$envf" || warn "no MYSQL_ATTR_SSL_CA set - database traffic over a public endpoint is unencrypted"
       else
         note "DB_HOST could not be resolved from this server"
@@ -540,7 +540,7 @@ if [ $IS_ROOT -eq 1 ]; then
     sshd -T 2>/dev/null > "$TMP/sshd"
     grep -qi '^passwordauthentication yes' "$TMP/sshd" && warn "SSH allows password logins - switch to key-only (PasswordAuthentication no)" || ok "SSH password logins disabled"
     grep -qi '^permitrootlogin yes' "$TMP/sshd" && warn "SSH allows direct root login with a password - use 'prohibit-password'" || ok "SSH root password login disabled"
-    grep -qi '^port 22$' "$TMP/sshd" && note "SSH is on port 22 - restrict it to your IPs in the Alibaba security group"
+    grep -qi '^port 22$' "$TMP/sshd" && note "SSH is on port 22 - restrict it to your IPs in the cloud security group"
   fi
 
   # services that must never listen on a public interface (one line per port)
@@ -549,7 +549,7 @@ if [ $IS_ROOT -eq 1 ]; then
     all=$(grep -E ":$port\$" "$TMP/ports"); [ -n "$all" ] || continue
     pub=$(echo "$all" | grep -vE '^(127\.|\[::1\]|localhost)' | tr '\n' ' ')
     if [ -n "$pub" ]; then
-      chk="the Alibaba security group"; [ $IM360 -eq 1 ] && chk="$chk or Imunify360's blocked-ports list"
+      chk="the cloud security group"; [ $IM360 -eq 1 ] && chk="$chk or Imunify360's blocked-ports list"
       bad "port $port (database/cache) listens on all interfaces (${pub% }) - bind it to 127.0.0.1, or confirm $chk closes it"
     else ok "port $port bound to localhost only"; fi
   done
@@ -560,7 +560,7 @@ if [ $IS_ROOT -eq 1 ]; then
   if [ $IM360 -eq 0 ]; then
     if [ -x /usr/sbin/csf ]; then
       grep -q '^TESTING = "1"' /etc/csf/csf.conf 2>/dev/null && warn "CSF firewall is in TESTING mode (rules are cleared every few minutes)" || ok "CSF firewall installed and not in testing mode"
-    else note "CSF firewall not installed - the Alibaba security group is then your only firewall"; fi
+    else note "CSF firewall not installed - the cloud security group is then your only firewall"; fi
     if have whmapi1; then
       whmapi1 cphulk_status 2>/dev/null | grep -q 'is_enabled: 1' && ok "cPHulk brute-force protection is on" || warn "cPHulk brute-force protection is off (WHM > Security Center)"
     fi
@@ -585,13 +585,27 @@ else
   note "skipped (needs root)"
 fi
 
-sub "ApsaraDB RDS - check these in the Alibaba console (not visible from this server)"
-out "         [ ] RDS IP whitelist contains ONLY this server's private IP - never 0.0.0.0/0"
+# functions a webshell needs to run server commands; Laravel needs proc_open, so it is not in the list
+# ponytail: reads each version's CLI config; a per-domain PHP-FPM pool override is not seen
+ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1 && sub "PHP settings (each installed cPanel PHP version)"
+for phpb in /opt/cpanel/ea-php*/root/usr/bin/php; do
+  [ -x "$phpb" ] || continue
+  pv=$(echo "$phpb" | grep -oE 'ea-php[0-9]+')
+  r=$("$phpb" -r '$o=[]; foreach(["exec","system","shell_exec","passthru","popen"] as $f) if (function_exists($f)) $o[]=$f;
+      echo implode(" ",$o), "|", ini_get("expose_php"), "|", ini_get("allow_url_include");' 2>/dev/null) || continue
+  IFS='|' read -r en ex au <<< "$r"
+  [ -n "$en" ] && warn "$pv: $en enabled - add them to disable_functions (WHM > MultiPHP INI Editor), keep proc_open" || ok "$pv: shell functions disabled"
+  case "${ex,,}" in 1|on) warn "$pv: expose_php is On - set it Off";; esac
+  case "${au,,}" in 1|on) bad "$pv: allow_url_include is On - set it Off";; esac
+done
+
+sub "Managed database - check these in your cloud console (not visible from this server)"
+out "         [ ] Database IP whitelist contains ONLY this server's private IP - never 0.0.0.0/0"
 out "         [ ] Public (internet) endpoint is released if the app uses the intranet endpoint"
 out "         [ ] SSL encryption enabled on the instance"
-out "         [ ] SQL Explorer / audit log on; review 'Error Logs' and 'Slow Query Logs'"
+out "         [ ] Audit / query log on; review the error log and slow query log"
 out "         [ ] Automated backups on, and a restore has been tested"
-out "         [ ] ECS security group: 22, 2083, 2087 limited to your IPs; only 80/443 open to all"
+out "         [ ] Cloud security group: 22, 2083, 2087 limited to your IPs; only 80/443 open to all"
 
 # =============================================================================
 # 6. CAPACITY: when does the server run out of CPU, memory or workers?
@@ -679,7 +693,7 @@ else
   note "skipped (needs root)"
 fi
 n=$(cnt 'Too many connections|SQLSTATE\[HY000\] \[1040\]' "$TMP/lv_all")
-[ "$n" -gt 0 ] && warn "RDS refused connections $n time(s) (Too many connections) - compare the RDS max connections with your PHP worker count"
+[ "$n" -gt 0 ] && warn "The database refused connections $n time(s) (Too many connections) - compare the database max connections with your PHP worker count"
 n=$(cnt 'Allowed memory size' "$TMP/lv_all")
 [ "$n" -gt 0 ] && warn "PHP memory_limit exhausted $n time(s) in Laravel"
 
@@ -721,8 +735,8 @@ if [ -n "${MAILTO:-}" ]; then
     mg_end=${mg_end#http://}; mg_end=${mg_end#https://}; mg_end=${mg_end%/}; mg_end=${mg_end:-api.mailgun.net}
     code=$(printf 'user = "api:%s"\n' "$mg_key" | curl -K - -sS -m 30 -o "$TMP/mailout" -w '%{http_code}' \
         "https://$mg_end/v3/$mg_dom/messages" -F "from=Server Audit <$m_from>" -F "to=$MAILTO" -F "subject=$subj" -F "text=<$TMP/plain" 2>"$TMP/mailerr")
-    if [ "$code" = 200 ]; then sent="Mailgun ($mg_dom)"
-    else printf '  [WARN] Mailgun refused the email (HTTP %s): %s\n' "${code:-none}" "$(head -c 200 "$TMP/mailout" "$TMP/mailerr" 2>/dev/null | tr '\n' ' ')"; fi
+    if [ "$code" = 200 ]; then sent="the mail provider API ($mg_dom)"
+    else printf '  [WARN] the mail provider API refused the email (HTTP %s): %s\n' "${code:-none}" "$(head -c 200 "$TMP/mailout" "$TMP/mailerr" 2>/dev/null | tr '\n' ' ')"; fi
   elif [ -n "$m_host" ] && [ -n "$m_user" ] && [ -n "$m_pass" ] && have curl; then
     # SMTP login on 465/587 (works where outgoing port 25 is blocked)
     m_port=${m_port:-587}; scheme=smtp; tls="--ssl-reqd"; [ "$m_port" = 465 ] && { scheme=smtps; tls=""; }
