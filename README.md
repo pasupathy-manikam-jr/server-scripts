@@ -19,7 +19,7 @@ The output is built for a nightly email. Checks that pass are counted but not pr
 
 ### Requirements
 
-- A RHEL-family Linux (AlmaLinux, Rocky, CloudLinux)
+- Linux
 - bash, curl, and the standard GNU tools
 - Run as **root**. A normal user can run it but sees far less.
 - Optional: `sysstat` for past CPU and memory peaks, and `composer` for the package audit.
