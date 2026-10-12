@@ -2,7 +2,7 @@
 
 ## server-audit.sh
 
-`server-audit.sh` is a read-only security, health and capacity audit for a **WHM/cPanel server that hosts Laravel apps**. It reads logs and config files, makes a few HTTPS requests to your own domains, and prints a report. It never changes, deletes, blocks or installs anything.
+`server-audit.sh` is a read-only security, health and capacity audit for a **Linux server that hosts Laravel apps**. It reads logs and config files, makes a few HTTPS requests to your own domains, and prints a report. It never changes, deletes, blocks or installs anything.
 
 The output is built for a nightly email. Checks that pass are counted but not printed, so the report lists only problems and useful info.
 
@@ -13,13 +13,13 @@ The output is built for a nightly email. Checks that pass are counted but not pr
 | **1. Laravel applications** | Each app found under `/home`:<br>• Laravel log errors, and secrets written into logs<br>• `.env` settings: `APP_DEBUG`, `APP_ENV`, `APP_KEY`, file permissions, database user, database host, TLS, secure cookies<br>• Document root pointing at the app root instead of `public/`<br>• World-writable files, and stray PHP files in `storage/` or `public/`<br>• Upload folders that can run PHP, and backups or dumps inside `public/`<br>• Backdoor-style code<br>• Files that differ from the last `git pull`<br>• `composer audit` |
 | **2. Web access logs** | • Requests per domain<br>• SQL injection, path traversal, XSS, secret/backup probes, exploit and webshell paths, remote command attempts and scanner tools<br>• Probes that actually got **HTTP 200**<br>• Login brute force<br>• Most active scanners<br>• 5xx errors by URL |
 | **3. Exposure checks** | For each domain:<br>• Probes `.env`, `.git/config`, `laravel.log`, `composer.lock`, `vendor/`, `phpinfo`, Telescope, Horizon and Ignition. A domain is reported only when the real content is served, not a 200 error page.<br>• Security headers, the HTTP→HTTPS redirect and TLS certificate expiry |
-| **4. Login activity** | Failed and successful SSH logins; failed cPanel, WHM and webmail logins |
-| **5. Server hardening** | • Imunify360, CSF, cPHulk and ModSecurity<br>• SSH password and root login<br>• Database and cache ports listening publicly<br>• PHP version and settings, and shell functions left enabled in PHP-FPM pools<br>• Pending OS security updates<br>• WHM backups: enabled, recent, copied off the server, and not excluding app files<br>• Managed database reminders |
+| **4. Login activity** | Failed and successful SSH logins; failed control panel and webmail logins |
+| **5. Server hardening** | • Firewall, brute-force protection and ModSecurity<br>• SSH password and root login<br>• Database and cache ports listening publicly<br>• PHP version and settings, and shell functions left enabled in PHP-FPM pools<br>• Pending OS security updates<br>• Backups: enabled, recent, copied off the server, and not excluding app files<br>• Managed database reminders |
 | **6. Capacity and peaks** | • Disk and swap<br>• CPU, memory and load peaks (from sysstat)<br>• Out-of-memory kills<br>• PHP-FPM `max_children` and Apache worker limits<br>• Database "too many connections" errors and PHP memory exhaustion<br>• Busiest hours |
 
 ### Requirements
 
-- WHM/cPanel on a RHEL-family Linux (AlmaLinux, Rocky, CloudLinux)
+- A RHEL-family Linux (AlmaLinux, Rocky, CloudLinux)
 - bash, curl, and the standard GNU tools
 - Run as **root**. A normal user can run it but sees far less.
 - Optional: `sysstat` for past CPU and memory peaks, and `composer` for the package audit.
@@ -41,7 +41,7 @@ All options are environment variables.
 |---|---|---|
 | `DAYS` | `7` | Days of history to analyse, or `all` |
 | `APPS` | auto-find under `/home` | Laravel app folders, space separated |
-| `DOMAINS` | all cPanel domains | Domains to probe, space separated |
+| `DOMAINS` | all hosted domains | Domains to probe, space separated |
 | `MAILTO` | none | Email the report to this address |
 | `MAIL_ENV` | none | Path to a Laravel `.env`, used to send the email with that app's mail settings (see below) |
 | `MAIL_FROM` | the app's `MAIL_FROM_ADDRESS` | Sender address |
