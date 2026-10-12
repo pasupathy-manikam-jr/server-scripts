@@ -24,6 +24,7 @@
 #     MAIL_FROM=audit@yourdomain.com  sender address (default: the app's MAIL_FROM_ADDRESS)
 #     SKIP_HTTP=1            skip the outside-in HTTPS probes
 #     SKIP_UPDATES=1         skip the pending-security-updates check
+#     VERBOSE=1              also print the checks that passed (default: only problems and info are printed)
 #     LOGIN_THRESHOLD=30     login POSTs from one IP before it is flagged
 #     INCLUDE_DOWN=1         also audit sites in Laravel maintenance mode (default: they are skipped,
 #                            except for the backdoor-code scan)
@@ -55,7 +56,7 @@ if [ -t 1 ]; then R=$'\e[31m'; Y=$'\e[33m'; G=$'\e[32m'; B=$'\e[1m'; N=$'\e[0m';
 out()     { printf '%s\n' "$*" | tee -a "$REPORT"; }
 section() { out ""; out "${B}=== $* ===${N}"; }
 sub()     { out ""; out "${B}--- $* ---${N}"; }
-ok()      { NPASS=$((NPASS+1)); out "  ${G}[ OK ]${N} $*"; }
+ok()      { NPASS=$((NPASS+1)); [ "${VERBOSE:-0}" = 1 ] && out "  ${G}[ OK ]${N} $*"; return 0; }   # passed checks are counted, shown only with VERBOSE=1
 warn()    { NWARN=$((NWARN+1)); out "  ${Y}[WARN]${N} $*"; }
 bad()     { NFAIL=$((NFAIL+1)); out "  ${R}[FAIL]${N} $*"; }
 note()    { out "  [info] $*"; }
