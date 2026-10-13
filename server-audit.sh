@@ -199,8 +199,10 @@ audit_app() {
     sig "PHP memory or time limit exhausted" 'Allowed memory size|Maximum execution time' warn
     sig "Disk full / write failures" 'No space left on device|failed to open stream: Permission denied' warn
 
-    # secrets written into logs (count only, values are never printed)
-    n=$(grep -aciE "(password|passwd|secret|api[_-]?key|access[_-]?token|authorization)[\"']?[[:space:]]*(=>|[:=])[[:space:]]*[\"']?[^]\"'[:space:],}]{6,}" "$lv" 2>/dev/null || true)
+    # secrets written into logs (count only, values are never printed); api_log* is skipped (it logs generated initial passwords on purpose)
+    n=$(find "$logdir" -type f -name '*.log' ! -name 'api_log*' "${NEWER[@]}" -print0 2>/dev/null \
+      | xargs -0 -r grep -ahE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+-]+\] [A-Za-z0-9_-]+\.[A-Z]+:' 2>/dev/null | datefilter "$TMP/d_iso" \
+      | grep -aciE "(password|passwd|secret|api[_-]?key|access[_-]?token|authorization)[\"']?[[:space:]]*(=>|[:=])[[:space:]]*[\"']?[^]\"'[:space:],}]{6,}" || true)
     [ "$n" -gt 0 ] && warn "$n log line(s) appear to contain passwords, tokens or keys - stop logging request data with credentials"
   else
     note "no storage/logs folder"
