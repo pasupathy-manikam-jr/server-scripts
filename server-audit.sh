@@ -618,28 +618,36 @@ else
 fi
 
 # functions a webshell needs to run server commands; Laravel needs proc_open, so it is not in the list.
-# Websites run on PHP-FPM, whose pools must disable them. The CLI php.ini (artisan, tinker) keeps them on purpose.
+# Websites should run on PHP-FPM, whose pools must disable them. The CLI php.ini (artisan, tinker) keeps them on purpose.
 SHELL_FN="exec system shell_exec passthru popen"
 ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1 && sub "PHP settings (each installed cPanel PHP version)"
-ls /opt/cpanel/ea-php*/root/etc/php-fpm.d/*.conf > "$TMP/pools" 2>/dev/null
-if [ -s "$TMP/pools" ]; then
-  : > "$TMP/fpm"
-  while IFS= read -r p; do
-    d=$(grep -h '^php_admin_value\[disable_functions\]' "$p" | cut -d= -f2 | tr -d ' ')
-    miss=""; for f in $SHELL_FN; do case ",$d," in *",$f,"*) ;; *) miss="$miss $f";; esac; done
-    [ -n "$miss" ] && echo "$(echo "$p" | grep -oE 'ea-php[0-9]+') $(basename "$p" .conf):$miss" >> "$TMP/fpm"
-  done < "$TMP/pools"
+# how each Apache site really runs PHP: FPM if its block hands PHP to a php-fpm socket, otherwise CGI with php.ini
+# (brand names are ServerAlias lines inside a site, so one switch covers them; leftover pool files are ignored)
+HTTPD=/etc/apache2/conf/httpd.conf
+if [ -r "$HTTPD" ]; then
+  awk '/<VirtualHost/{n="";f=0} $1=="ServerName"{n=$2} /SetHandler.*proxy:unix/{f=1} /<\/VirtualHost>/{print (f?"FPM":"CGI"), n}' "$HTTPD" \
+    | sort -u | grep -vE " (proxy-subdomains-vhost\.localhost|$(hostname -f 2>/dev/null || hostname))\$" > "$TMP/handlers"
+  awk '$1=="FPM"{print $2}' "$TMP/handlers" | sort -u > "$TMP/fpmsites"
+  awk '$1=="CGI"{print $2}' "$TMP/handlers" | sort -u | comm -23 - "$TMP/fpmsites" > "$TMP/nofpm"
+  : > "$TMP/fpm"; npool=0
+  while IFS= read -r site; do
+    for p in /opt/cpanel/ea-php*/root/etc/php-fpm.d/"$site".conf; do
+      [ -r "$p" ] || continue; npool=$((npool+1))
+      d=$(grep -h '^php_admin_value\[disable_functions\]' "$p" | cut -d= -f2 | tr -d ' ')
+      miss=""; for f in $SHELL_FN; do case ",$d," in *",$f,"*) ;; *) miss="$miss $f";; esac; done
+      [ -n "$miss" ] && echo "$(echo "$p" | grep -oE 'ea-php[0-9]+') $site:$miss" >> "$TMP/fpm"
+    done
+  done < "$TMP/fpmsites"
   if [ -s "$TMP/fpm" ]; then
     warn "website PHP-FPM pools still allow shell functions - add them in WHM > MultiPHP Manager > System PHP-FPM Settings > Disable Functions (keep proc_open):"
     indent < "$TMP/fpm"
-  else ok "all $(wc -l < "$TMP/pools") website PHP-FPM pools disable $SHELL_FN"; fi
-elif [ $IS_ROOT -eq 0 ] && ls -d /opt/cpanel/ea-php*/root/etc/php-fpm.d >/dev/null 2>&1; then
-  note "PHP-FPM pool settings need root to read - website shell-function check skipped"
-fi
-# a domain not on PHP-FPM runs through the version's php.ini, where the functions are usually enabled
-if [ $IS_ROOT -eq 1 ] && have whmapi1; then
-  whmapi1 php_get_vhost_versions 2>/dev/null | tr -d "'\"" | awk '$1=="php_fpm:" {f=$2} $1=="vhost:" {if (f!=1) print $2; f=""}' > "$TMP/nofpm"
-  [ -s "$TMP/nofpm" ] && { warn "domain(s) not on PHP-FPM (they use php.ini, shell functions likely enabled) - switch them in WHM > MultiPHP Manager:"; indent < "$TMP/nofpm"; }
+  elif [ "$npool" -gt 0 ]; then ok "all $npool PHP-FPM pools in use disable $SHELL_FN"; fi
+  if [ -s "$TMP/nofpm" ]; then
+    warn "site(s) not on PHP-FPM - they run PHP through php.ini, where shell functions are usually enabled. Switch each to PHP-FPM in WHM > MultiPHP Manager (covers all its alias domains):"
+    indent < "$TMP/nofpm"
+  fi
+elif [ $IS_ROOT -eq 0 ] && [ -e "$HTTPD" ]; then
+  note "PHP handler and PHP-FPM pool checks need root - skipped"
 fi
 for phpb in /opt/cpanel/ea-php*/root/usr/bin/php; do
   [ -x "$phpb" ] || continue
