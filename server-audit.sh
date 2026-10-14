@@ -455,6 +455,7 @@ else
     is_down "$d" && continue
     code=$(curl -sk -m 8 -A "$UA" -D "$TMP/hdr" -o /dev/null -w '%{http_code}' "https://$d/" 2>/dev/null)
     if [ -z "$code" ] || [ "$code" = 000 ]; then note "$d: not reachable over HTTPS, skipped"; continue; fi
+    if grep -qi '^cf-mitigated:' "$TMP/hdr"; then note "$d: CDN bot protection challenged the check, skipped (allow this server's IP in the CDN firewall to check it)"; continue; fi
     found=0
     for p in "${PROBES[@]}"; do
       IFS='~' read -r path rx desc <<< "$p"
