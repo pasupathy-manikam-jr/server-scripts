@@ -629,21 +629,25 @@ ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1 && sub "PHP settings (ea
 # (brand names are ServerAlias lines inside a site, so one switch covers them; leftover pool files are ignored)
 HTTPD=/etc/apache2/conf/httpd.conf
 if [ -r "$HTTPD" ]; then
-  awk '/<VirtualHost/{n="";f=0} $1=="ServerName"{n=$2} /SetHandler.*proxy:unix/{f=1} /<\/VirtualHost>/{print (f?"FPM":"CGI"), n}' "$HTTPD" \
-    | sort -u | grep -vE " (proxy-subdomains-vhost\.localhost|$(hostname -f 2>/dev/null || hostname))\$" > "$TMP/handlers"
+  # prints: FPM|CGI site socket - the socket names the pool actually used (pool files named after the site can be unused leftovers)
+  awk '/<VirtualHost/{n="";k=""} $1=="ServerName"{n=$2} /SetHandler.*proxy:unix:/{k=$0; sub(/.*proxy:unix:/,"",k); sub(/\|.*/,"",k)} /<\/VirtualHost>/{print (k?"FPM":"CGI"), n, k}' "$HTTPD" \
+    | sort -u | grep -vE "^[A-Z]+ (proxy-subdomains-vhost\.localhost|$(hostname -f 2>/dev/null || hostname)) " > "$TMP/handlers"
   awk '$1=="FPM"{print $2}' "$TMP/handlers" | sort -u > "$TMP/fpmsites"
   awk '$1=="CGI"{print $2}' "$TMP/handlers" | sort -u | comm -23 - "$TMP/fpmsites" > "$TMP/nofpm"
   : > "$TMP/fpm"; npool=0
-  while IFS= read -r site; do
-    for p in /opt/cpanel/ea-php*/root/etc/php-fpm.d/"$site".conf; do
-      [ -r "$p" ] || continue; npool=$((npool+1))
-      d=$(grep -h '^php_admin_value\[disable_functions\]' "$p" | cut -d= -f2 | tr -d ' ')
-      miss=""; for f in $SHELL_FN; do case ",$d," in *",$f,"*) ;; *) miss="$miss $f";; esac; done
-      [ -n "$miss" ] && echo "$(echo "$p" | grep -oE 'ea-php[0-9]+') $site:$miss" >> "$TMP/fpm"
+  awk '$1=="FPM"{print $2, $3}' "$TMP/handlers" | sort -u | while read -r site sock; do
+    for p in $(grep -lF "listen = $sock" /opt/cpanel/ea-php*/root/etc/php-fpm.d/*.conf 2>/dev/null); do
+      echo "$site $p"
     done
-  done < "$TMP/fpmsites"
+  done > "$TMP/pools"
+  while read -r site p; do
+    npool=$((npool+1))
+    d=$(grep -h '^php_admin_value\[disable_functions\]' "$p" | cut -d= -f2 | tr -d ' ')
+    miss=""; for f in $SHELL_FN; do case ",$d," in *",$f,"*) ;; *) miss="$miss $f";; esac; done
+    [ -n "$miss" ] && echo "$(echo "$p" | grep -oE 'ea-php[0-9]+') $site (pool $(basename "$p" .conf)):$miss" >> "$TMP/fpm"
+  done < "$TMP/pools"
   if [ -s "$TMP/fpm" ]; then
-    warn "website PHP-FPM pools still allow shell functions - add them in WHM > MultiPHP Manager > System PHP-FPM Settings > Disable Functions (keep proc_open):"
+    warn "website PHP-FPM pools still allow shell functions - add php_admin_value_disable_functions to /var/cpanel/userdata/USER/POOL.php-fpm.yaml, then /scripts/php_fpm_config --rebuild (keep proc_open):"
     indent < "$TMP/fpm"
   elif [ "$npool" -gt 0 ]; then ok "all $npool PHP-FPM pools in use disable $SHELL_FN"; fi
   if [ -s "$TMP/nofpm" ]; then
