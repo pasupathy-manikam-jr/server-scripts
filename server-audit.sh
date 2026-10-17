@@ -455,11 +455,12 @@ else
     "horizon~Horizon~Laravel Horizon without a login"
     "_ignition/health-check~can_execute_commands~Ignition debug endpoint (debug mode is on)"
   )
+  CDN_SKIP=""
   for d in "${DOM_LIST[@]}"; do
     is_down "$d" && continue
     code=$(curl -sk -m 8 -A "$UA" -D "$TMP/hdr" -o /dev/null -w '%{http_code}' "https://$d/" 2>/dev/null)
     if [ -z "$code" ] || [ "$code" = 000 ]; then note "$d: not reachable over HTTPS, skipped"; continue; fi
-    if grep -qi '^cf-mitigated:' "$TMP/hdr"; then note "$d: CDN bot protection challenged the check, skipped (allow this server's IP in the CDN firewall to check it)"; continue; fi
+    if grep -qi '^cf-mitigated:' "$TMP/hdr"; then CDN_SKIP="$CDN_SKIP $d"; continue; fi
     found=0
     for p in "${PROBES[@]}"; do
       IFS='~' read -r path rx desc <<< "$p"
@@ -487,6 +488,7 @@ else
       fi
     fi
   done
+  [ -n "$CDN_SKIP" ] && note "CDN bot protection challenged the check, skipped (allow this server's IP in the CDN firewall):$CDN_SKIP"
 fi
 
 # =============================================================================
