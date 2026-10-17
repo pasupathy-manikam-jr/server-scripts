@@ -306,6 +306,10 @@ audit_app() {
       warn "$(wc -l < "$TMP/f7") file(s) differ from the last git pull (M = edited on the server, ?? = not in git) - commit them or remove them:"
       head -n 20 "$TMP/f7" | indent
     else ok "code matches the last git pull"; fi
+    # a token in the remote URL lets anyone who reads .git/config into the repo (value never printed)
+    if grep -qE '^\s*url\s*=\s*https?://[^/@[:space:]]+@' "$app/.git/config" 2>/dev/null; then
+      bad "git remote URL contains a token/password in .git/config - remove it (git remote set-url origin https://github.com/OWNER/REPO.git) and revoke the token"
+    else ok "no credentials in git remote URL"; fi
   else note "not a git checkout - change detection skipped"; fi
 
   # known-vulnerable packages
