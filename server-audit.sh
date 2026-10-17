@@ -562,10 +562,20 @@ if [ $IS_ROOT -eq 1 ]; then
 
   # services that must never listen on a public interface (one line per port)
   ss -tlnH 2>/dev/null | awk '{print $4}' | sort -u > "$TMP/ports"
+  # Imunify360 in DENY mode only lets in the listed TCP ports, so a public listener outside that list is closed by the firewall
+  fwin=""
+  if [ $IM360 -eq 1 ]; then
+    fwcfg=$(imunify360-agent config show 2>/dev/null)
+    echo "$fwcfg" | grep -q '"port_blocking_mode": "DENY"' &&
+      fwin=$(echo "$fwcfg" | grep -oE '"TCP_IN_IPv[46]": \[[^]]*\]' | sed 's/.*: //' | grep -oE '[0-9]+(-[0-9]+)?' | tr '\n' ' ')
+  fi
+  fw_open() { [ -z "$fwin" ] && return 0; for r in $fwin; do [ "${r%-*}" -le "$1" ] && [ "$1" -le "${r#*-}" ] && return 0; done; return 1; }
   for port in 3306 6379 11211 27017 5432 9200; do
     all=$(grep -E ":$port\$" "$TMP/ports"); [ -n "$all" ] || continue
     pub=$(echo "$all" | grep -vE '^(127\.|\[::1\]|localhost)' | tr '\n' ' ')
-    if [ -n "$pub" ]; then
+    if [ -n "$pub" ] && ! fw_open "$port"; then
+      ok "port $port listens publicly but Imunify360 (DENY mode) does not allow it in"
+    elif [ -n "$pub" ]; then
       chk="the cloud security group"; [ $IM360 -eq 1 ] && chk="$chk or Imunify360's blocked-ports list"
       bad "port $port (database/cache) listens on all interfaces (${pub% }) - bind it to 127.0.0.1, or confirm $chk closes it"
     else ok "port $port bound to localhost only"; fi
