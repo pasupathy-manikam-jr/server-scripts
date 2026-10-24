@@ -769,7 +769,7 @@ if [ $IS_ROOT -eq 1 ]; then
   n=$(wc -l < "$TMP/fpm")
   if [ "$n" -gt 0 ]; then
     warn "PHP-FPM hit pm.max_children $n time(s) ($FL) - visitors waited or got 503. Raise it only if RAM allows (about 40-80 MB per worker)"
-    out "         By site (pool) and its current limit:"
+    out "         By site (pool) and its limit at the time (from the log line, not today's setting):"
     grep -aoE '\[pool [^]]+\].*setting \([0-9]+\)' "$TMP/fpm" | sed -E 's/\] .*setting \(([0-9]+)\)/] limit \1/' | top 8 | indent
     out "         Hours it happened (top 5):"
     cut -c2-15 "$TMP/fpm" | sed 's/$/:00/' | top 5 | indent
