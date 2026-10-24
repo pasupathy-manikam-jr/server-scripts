@@ -53,14 +53,17 @@ IS_ROOT=0; [ "$(id -u)" -eq 0 ] && IS_ROOT=1
 
 # ---------- output helpers ---------------------------------------------------
 if [ -t 1 ]; then R=$'\e[31m'; Y=$'\e[33m'; G=$'\e[32m'; B=$'\e[1m'; N=$'\e[0m'; else R=; Y=; G=; B=; N=; fi
-out()     { printf '%s\n' "$*" | tee -a "$REPORT"; }
-section() { out ""; out "${B}=== $* ===${N}"; }
-sub()     { out ""; out "${B}--- $* ---${N}"; }
+WHERE=""; : > "$TMP/pending"
+# a sub-heading prints only once something is listed under it (kept in a file so pipelines/subshells see it too)
+flush()   { [ -s "$TMP/pending" ] || return 0; local p; p=$(cat "$TMP/pending"); : > "$TMP/pending"; out ""; out "$p"; }
+out()     { flush; printf '%s\n' "$*" | tee -a "$REPORT"; }
+section() { : > "$TMP/pending"; WHERE="${*#[0-9]. }"; out ""; out "${B}=== $* ===${N}"; }
+sub()     { printf '%s' "${B}--- $* ---${N}" > "$TMP/pending"; case "$*" in App:*) WHERE="${*##*/}";; esac; }
 ok()      { NPASS=$((NPASS+1)); [ "${VERBOSE:-0}" = 1 ] && out "  ${G}[ OK ]${N} $*"; return 0; }   # passed checks are counted, shown only with VERBOSE=1
-warn()    { NWARN=$((NWARN+1)); out "  ${Y}[WARN]${N} $*"; }
-bad()     { NFAIL=$((NFAIL+1)); out "  ${R}[FAIL]${N} $*"; }
+warn()    { NWARN=$((NWARN+1)); out "  ${Y}[WARN]${N} $*"; echo "WARN  $WHERE: $*" >> "$TMP/actions"; }   # also collected for the to-do list
+bad()     { NFAIL=$((NFAIL+1)); out "  ${R}[FAIL]${N} $*"; echo "FAIL  $WHERE: $*" >> "$TMP/actions"; }
 note()    { out "  [info] $*"; }
-indent()  { sed 's/^/         /' | tee -a "$REPORT"; }
+indent()  { flush; sed 's/^/         /' | tee -a "$REPORT"; }
 top()     { sort | uniq -c | sort -rn | head -n "${1:-5}"; }
 cnt()     { grep -ciE -- "$1" "$2" 2>/dev/null || true; }
 have()    { command -v "$1" >/dev/null 2>&1; }
@@ -174,8 +177,9 @@ audit_app() {
 
     if [ $((nerr+ncrit)) -gt 0 ]; then
       out "         Most frequent errors:"
-      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | sed -E 's/^\[[^]]+\] [^:]+: //' \
+      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | sed -E 's/^\[[^]]+\] [^:]+: //; s/[0-9]{3,}/#/g' \
         | cut -c1-140 | top 8 | indent
+      out "         (numbers of 3+ digits shown as # so one error with different IDs counts together)"
       out "         Errors per day:"
       grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | cut -c2-11 | sort | uniq -c | tail -n 14 | indent
     fi
@@ -288,7 +292,7 @@ audit_app() {
   fi
 
   # recently changed code (deployments explain these; anything else is suspicious)
-  if [ "$DAYS" != all ]; then
+  if [ "$DAYS" != all ] && [ ! -d "$app/.git" ]; then   # git checkouts: the git check below compares content instead
     find "$app" -xdev \( -path "$app/vendor" -o -path "$app/node_modules" -o -path "$app/storage" -o -path "$app/bootstrap/cache" \) -prune \
       -o -type f -name '*.php' -mtime "-$DAYS" -print 2>/dev/null > "$TMP/f4"
     n=$(wc -l < "$TMP/f4")
@@ -412,6 +416,11 @@ if [ "$TOTAL" -gt 0 ]; then
   sub "Most active scanners (403/404 = already blocked, no action needed; act only on 200 or login floods)"
   grep -aiE -- "$P_SQLI|$P_LFI|$P_EXPL|$P_RCE|$P_SCAN|/\.env|/\.git/" "$ACC" > "$TMP/offl"
   awk '{print $2}' "$TMP/offl" | top 15 > "$TMP/off"
+  # list scanners only when some request was not refused
+  if [ "${VERBOSE:-0}" != 1 ] && ! awk '$10 !~ /^(30[1278]|40[034]|429)$/ {f=1} END {exit !f}' "$TMP/offl"; then
+    [ -s "$TMP/off" ] && note "$(wc -l < "$TMP/off") scanner IP(s), every request refused (403/404/301) - nothing to do (VERBOSE=1 lists them)"
+    : > "$TMP/off"
+  fi
   [ -s "$TMP/off" ] && out "         (requests, IP - then what it tried: count, HTTP status, domain+path, first 100 chars)"
   while read -r n ip; do
     out "$(printf '         %6s  %s  %s' "$n" "$ip" "$(awk -v ip="$ip" '$2==ip {p[$1 $8]; s[$10]++}
@@ -678,6 +687,7 @@ for phpb in /opt/cpanel/ea-php*/root/usr/bin/php; do
   case "${au,,}" in 1|on) bad "$pv: allow_url_include is On - set it Off";; esac
 done
 
+if [ "$(date +%u)" = 7 ] || [ "${VERBOSE:-0}" = 1 ]; then   # weekly reminder (Sundays), not every night
 sub "Managed database - check these in your cloud console (not visible from this server)"
 out "         [ ] Database IP whitelist contains ONLY this server's private IP - never 0.0.0.0/0"
 out "         [ ] Public (internet) endpoint is released if the app uses the intranet endpoint"
@@ -685,6 +695,7 @@ out "         [ ] SSL encryption enabled on the instance"
 out "         [ ] Audit / query log on; review the error log and slow query log"
 out "         [ ] Automated backups on, and a restore has been tested"
 out "         [ ] Cloud security group: 22, 2083, 2087 limited to your IPs; only 80/443 open to all"
+fi
 
 # =============================================================================
 # 6. CAPACITY: when does the server run out of CPU, memory or workers?
@@ -792,12 +803,15 @@ note "when the same hour tops requests, errors and CPU/memory, that is your capa
 # =============================================================================
 section "Summary"
 out "  OK: $NPASS    WARN: $NWARN    FAIL: $NFAIL"
+todo() { [ -s "$TMP/actions" ] && { grep '^FAIL' "$TMP/actions"; grep '^WARN' "$TMP/actions"; } | cut -c1-200; }
+if [ -s "$TMP/actions" ]; then out ""; out "  To do (FAIL first):"; todo | sed 's/^/    /' | tee -a "$REPORT"; fi
 out "  Attack attempts in section 2 are normal background noise for any public server;"
 out "  act on FAIL items first, then WARN."
 
 if [ -n "${MAILTO:-}" ]; then
   subj="[server-audit] $(hostname): $NFAIL fail, $NWARN warn"
-  sed 's/\x1b\[[0-9;]*m//g' "$REPORT" > "$TMP/plain"
+  { [ -s "$TMP/actions" ] && { echo "TO DO (details below):"; todo | sed 's/^/  /'; echo; }
+    cat "$REPORT"; } | sed 's/\x1b\[[0-9;]*m//g' > "$TMP/plain"   # to-do list first in the email
   mg_dom=""; mg_key=""; mg_end=""; m_host=""; m_port=""; m_user=""; m_pass=""; m_from="${MAIL_FROM:-}"
   if [ -n "${MAIL_ENV:-}" ] && [ -r "$MAIL_ENV" ]; then
     mg_dom=$(envget "$MAIL_ENV" MAILGUN_DOMAIN); mg_key=$(envget "$MAIL_ENV" MAILGUN_SECRET); mg_end=$(envget "$MAIL_ENV" MAILGUN_ENDPOINT)
