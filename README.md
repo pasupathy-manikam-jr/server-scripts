@@ -50,6 +50,7 @@ All options are environment variables.
 | `VERBOSE=1` | off | Also print passed checks |
 | `LOGIN_THRESHOLD` | `30` | Login POSTs from one IP before it is flagged |
 | `INCLUDE_DOWN=1` | off | Also audit sites in Laravel maintenance mode. They are skipped by default, except for the backdoor scan |
+| `DISK_SNAPSHOTS=1` | off | The cloud provider snapshots the whole disk, so skip the control-panel backup check |
 | `IGNORE_FILE` | `/root/server-audit.ignore` | Known-good file paths, one text fragment per line. Lines starting with `#` are comments. Ignored files are still scanned for backdoor code |
 
 ### Emailing the report

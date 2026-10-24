@@ -619,7 +619,9 @@ if [ $IS_ROOT -eq 1 ]; then
   fi
 
   # WHM backups: .env and uploaded files (storage/app) exist only on this server, git and the database snapshots do not cover them
-  if have whmapi1; then
+  if [ "${DISK_SNAPSHOTS:-0}" = 1 ]; then
+    ok "whole-disk snapshots are taken by the cloud provider (DISK_SNAPSHOTS=1) - WHM backup check skipped"
+  elif have whmapi1; then
     whmapi1 backup_config_get 2>/dev/null | tr -d "'\"" > "$TMP/bk"
     if grep -qE '^[[:space:]]*backupenable:[[:space:]]*1' "$TMP/bk"; then
       ok "WHM backups are enabled"
