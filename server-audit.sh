@@ -806,9 +806,8 @@ note "when the same hour tops requests, errors and CPU/memory, that is your capa
 section "Summary"
 out "  OK: $NPASS    WARN: $NWARN    FAIL: $NFAIL"
 todo() { [ -s "$TMP/actions" ] && { grep '^FAIL' "$TMP/actions"; grep '^WARN' "$TMP/actions"; } | cut -c1-200; }
-if [ -s "$TMP/actions" ]; then out ""; out "  To do (FAIL first):"; todo | sed 's/^/    /' | tee -a "$REPORT"; fi
-out "  Attack attempts in section 2 are normal background noise for any public server;"
-out "  act on FAIL items first, then WARN."
+# terminal/file only: the email already opens with this list
+if [ -s "$TMP/actions" ]; then printf '\n  To do (FAIL first):\n'; todo | sed 's/^/    /'; fi
 
 if [ -n "${MAILTO:-}" ]; then
   subj="[server-audit] $(hostname): $NFAIL fail, $NWARN warn"
