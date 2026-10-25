@@ -63,7 +63,7 @@ echo
 echo "--- Running PHP-FPM (patched on disk is not enough until FPM restarts) ---"
 n=0
 for pid in $(pgrep -f 'php-fpm: master' 2>/dev/null); do
-  n=$((n+1)); exe=$(readlink "/proc/$pid/exe" 2>/dev/null); cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+  n=$((n+1)); exe=$(readlink "/proc/$pid/exe" 2>/dev/null); cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | tr -s ' ')
   case "$exe" in
     *"(deleted)"*) warn "master $pid runs a binary replaced on disk - restart it (${cmd% })";;
     "") echo "  [info] master $pid - cannot read its binary (run as root)";;
