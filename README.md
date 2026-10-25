@@ -88,3 +88,27 @@ Add this to root's crontab with `crontab -e`:
 - **WARN:** worth a look.
 - **info:** context only.
 - Attack attempts in section 2 are normal background noise for any public server. A `403` or `404` means the request was refused. Act on the **"Probes that SUCCEEDED (HTTP 200)"** list and on login floods.
+
+## php-patch-check.sh
+
+`php-patch-check.sh` checks whether every PHP on a **Linux server** has a security fix, and whether the fixed code is actually running. It is read-only and set up for the PHP2Shell release (CVE-2026-109618, CVE-2026-109619).
+
+### What it checks
+
+| Check | How |
+|---|---|
+| **Installed versions** | Each PHP binary found against the first fixed release of its branch (8.2.35, 8.3.36, 8.4.27, 8.5.12) |
+| **Vendor backports** | The package changelog lists the CVE, so a patched build that kept an old version number still passes |
+| **End-of-life branches** | PHP below 8.2 is flagged unless a vendor backport is installed |
+| **Restart needed** | A running PHP-FPM master whose binary was replaced on disk (still running the old, vulnerable code) |
+| **Signs of attack** | `Allowed memory size ... exhausted ... in Unknown on line 0` and segfaults in PHP-FPM and web server error logs |
+
+### Usage
+
+```bash
+bash php-patch-check.sh
+```
+
+Run it as **root** on the server itself. Exit codes: `0` all patched, `1` warnings (restart needed or log signs), `2` a vulnerable PHP was found.
+
+For the next PHP security release, update the `CVE`, `FIXED` and `OLDEST_SUPPORTED` lines at the top of the script.
