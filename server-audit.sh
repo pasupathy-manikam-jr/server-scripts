@@ -184,12 +184,12 @@ audit_app() {
     else ok "no ERROR or CRITICAL entries in the window"; fi
 
     if [ $((nerr+ncrit)) -gt 0 ]; then
-      out "         Most frequent errors:"
-      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | sed -E 's/^\[[^]]+\] [^:]+: //; s/[0-9]{3,}/#/g' \
-        | cut -c1-140 | top 8 | indent
-      out "         (numbers of 3+ digits shown as # so one error with different IDs counts together)"
-      out "         Errors per day:"
-      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | cut -c2-11 | sort | uniq -c | tail -n 14 | indent
+      # group by the message alone: the JSON context ({"tran_ID":...}) and long numbers differ per entry
+      out "         Most frequent errors (VERBOSE=1 adds each entry's context):"
+      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | sed -E 's/^\[[^]]+\] [^:]+: //' \
+        | { if V; then sed -E 's/[0-9]{3,}/#/g'; else sed -E 's/ [{[].*$//; s/[0-9]{3,}/#/g'; fi; } | cut -c1-140 | top 8 | indent
+      grep -aE '\.(ERROR|CRITICAL|ALERT|EMERGENCY):' "$lv" | cut -c2-11 | sort | uniq -c | tail -n 14 > "$TMP/epd"
+      [ "$(grep -c . "$TMP/epd")" -gt 1 ] && { out "         Errors per day:"; indent < "$TMP/epd"; }
     fi
 
     # ---- 1b. attack and abuse traces inside the Laravel logs ----------------
