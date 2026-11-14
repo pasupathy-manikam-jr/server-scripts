@@ -806,13 +806,41 @@ note "when the same hour tops requests, errors and CPU/memory, that is your capa
 section "Summary"
 out "  OK: $NPASS    WARN: $NWARN    FAIL: $NFAIL"
 todo() { [ -s "$TMP/actions" ] && { grep '^FAIL' "$TMP/actions"; grep '^WARN' "$TMP/actions"; } | cut -c1-200; }
-# terminal/file only: the email already opens with this list
-if [ -s "$TMP/actions" ]; then printf '\n  To do (FAIL first):\n'; todo | sed 's/^/    /'; fi
 
+# Compare with the last run, so items seen every night are not reported as news.
+# Counts change daily ("1035 errors" -> "1036 errors"), so items are matched with numbers ignored.
+# This state file is the only thing the script writes outside its temp folder.
+STATE="${STATE_FILE:-/root/.server-audit.last}"
+key() { sed -E 's/[0-9]+/#/g'; }
+todo > "$TMP/todo_now" 2>/dev/null || :
+: > "$TMP/new"; : > "$TMP/known"
+if [ -r "$STATE" ]; then
+  key < "$STATE" | sort -u > "$TMP/oldkeys"
+  while IFS= read -r l; do
+    if printf '%s\n' "$l" | key | grep -qxFf - "$TMP/oldkeys"; then echo "$l" >> "$TMP/known"; else echo "$l" >> "$TMP/new"; fi
+  done < "$TMP/todo_now"
+  cut -c1-200 < "$STATE" | while IFS= read -r l; do                       # fixed since last run
+    printf '%s\n' "$l" | key | grep -qxFf - <(key < "$TMP/todo_now") || echo "$l"
+  done > "$TMP/fixed"
+else cp "$TMP/todo_now" "$TMP/new"; : > "$TMP/fixed"; fi
+NNEW=$(grep -c . "$TMP/new" || true); NKNOWN=$(grep -c . "$TMP/known" || true); NFIXED=$(grep -c . "$TMP/fixed" || true)
+{ cp "$TMP/todo_now" "$STATE" && chmod 600 "$STATE"; } 2>/dev/null || :
+
+changes() {   # the part of the report that differs from yesterday
+  [ -s "$TMP/new" ] && { echo "NEW since the last run:"; sed 's/^/  /' "$TMP/new"; echo; }
+  [ -s "$TMP/fixed" ] && { echo "FIXED since the last run:"; sed 's/^/  /' "$TMP/fixed"; echo; }
+  [ -s "$TMP/known" ] && { echo "Still open from before ($NKNOWN, details below):"; cut -c1-110 "$TMP/known" | sed 's/^/  /'; echo; }
+  [ -s "$TMP/todo_now" ] || echo "Nothing to do - all checks passed."
+}
+# terminal/file only: the email already opens with this list
+printf '\n'; changes | sed 's/^/  /'
+
+if [ -n "${MAILTO:-}" ] && [ "${MAIL_NEW_ONLY:-0}" = 1 ] && [ "$NNEW" -eq 0 ] && [ "$NFIXED" -eq 0 ]; then
+  echo "  [info] nothing new or fixed since the last run - email skipped (MAIL_NEW_ONLY=1)"; MAILTO=""
+fi
 if [ -n "${MAILTO:-}" ]; then
-  subj="[server-audit] $(hostname): $NFAIL fail, $NWARN warn"
-  { [ -s "$TMP/actions" ] && { echo "TO DO (details below):"; todo | sed 's/^/  /'; echo; }
-    cat "$REPORT"; } | sed 's/\x1b\[[0-9;]*m//g' > "$TMP/plain"   # to-do list first in the email
+  subj="[server-audit] $(hostname): $NNEW new, $NFIXED fixed, $NKNOWN still open"
+  { changes; echo; cat "$REPORT"; } | sed 's/\x1b\[[0-9;]*m//g' > "$TMP/plain"   # changes first in the email
   mg_dom=""; mg_key=""; mg_end=""; m_host=""; m_port=""; m_user=""; m_pass=""; m_from="${MAIL_FROM:-}"
   if [ -n "${MAIL_ENV:-}" ] && [ -r "$MAIL_ENV" ]; then
     mg_dom=$(envget "$MAIL_ENV" MAILGUN_DOMAIN); mg_key=$(envget "$MAIL_ENV" MAILGUN_SECRET); mg_end=$(envget "$MAIL_ENV" MAILGUN_ENDPOINT)

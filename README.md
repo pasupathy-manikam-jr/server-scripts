@@ -2,9 +2,9 @@
 
 ## server-audit.sh
 
-`server-audit.sh` is a read-only security, health and capacity audit for a **Linux server that hosts Laravel apps**. It reads logs and config files, makes a few HTTPS requests to your own domains, and prints a report. It never changes, deletes, blocks or installs anything.
+`server-audit.sh` is a read-only security, health and capacity audit for a **Linux server that hosts Laravel apps**. It reads logs and config files, makes a few HTTPS requests to your own domains, and prints a report. It never changes, deletes, blocks or installs anything. The only file it writes is a small state file with last run's to-do list (`STATE_FILE`).
 
-The output is built for a nightly email. Checks that pass are counted but not printed, so the report lists only problems and useful info.
+The output is built for a nightly email. Checks that pass are counted but not printed, so the report lists only problems and useful info. Each report opens with what changed since the last run: **new** problems, problems **fixed**, and a one-line list of those **still open**, so known issues don't read as news every night.
 
 ### What it checks
 
@@ -51,6 +51,8 @@ All options are environment variables.
 | `LOGIN_THRESHOLD` | `30` | Login POSTs from one IP before it is flagged |
 | `INCLUDE_DOWN=1` | off | Also audit sites in Laravel maintenance mode. They are skipped by default, except for the backdoor scan |
 | `DISK_SNAPSHOTS=1` | off | The cloud provider snapshots the whole disk, so skip the control-panel backup check |
+| `STATE_FILE` | `/root/.server-audit.last` | Where last run's to-do list is kept, to tell new problems from known ones |
+| `MAIL_NEW_ONLY=1` | off | Send the email only when something is new or fixed since the last run |
 | `IGNORE_FILE` | `/root/server-audit.ignore` | Known-good file paths, one text fragment per line. Lines starting with `#` are comments. Ignored files are still scanned for backdoor code |
 
 ### Emailing the report
