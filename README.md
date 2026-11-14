@@ -30,7 +30,7 @@ The output is built for a nightly email. Checks that pass are counted but not pr
 bash server-audit.sh                  # last 7 days (today counts as day 1)
 DAYS=2 bash server-audit.sh           # yesterday + today (use this for a nightly run)
 DAYS=all bash server-audit.sh         # every log file, no date filter
-VERBOSE=1 bash server-audit.sh        # also print the checks that passed
+VERBOSE=1 bash server-audit.sh        # also print passed checks and context
 ```
 
 ### Options
@@ -47,12 +47,13 @@ All options are environment variables.
 | `MAIL_FROM` | the app's `MAIL_FROM_ADDRESS` | Sender address |
 | `SKIP_HTTP=1` | off | Skip the HTTPS probes |
 | `SKIP_UPDATES=1` | off | Skip the OS security-update check |
-| `VERBOSE=1` | off | Also print passed checks |
+| `VERBOSE=1` | off | Also print passed checks and context: [info] lines, traffic, login and capacity tables. Without it the report shows only problems, and sections with nothing wrong are left out |
 | `LOGIN_THRESHOLD` | `30` | Login POSTs from one IP before it is flagged |
 | `INCLUDE_DOWN=1` | off | Also audit sites in Laravel maintenance mode. They are skipped by default, except for the backdoor scan |
 | `DISK_SNAPSHOTS=1` | off | The cloud provider snapshots the whole disk, so skip the control-panel backup check |
 | `STATE_FILE` | `/root/.server-audit.last` | Where last run's to-do list is kept, to tell new problems from known ones |
 | `MAIL_NEW_ONLY=1` | off | Send the email only when something is new or fixed since the last run |
+| `KNOWN_IPS` | none | Your own IPs, space separated. Control-panel admin logins from these are not reported; a login from any other IP is a WARN |
 | `IGNORE_FILE` | `/root/server-audit.ignore` | Known-good file paths, one text fragment per line. Lines starting with `#` are comments. Ignored files are still scanned for backdoor code |
 
 ### Emailing the report

@@ -53,17 +53,25 @@ IS_ROOT=0; [ "$(id -u)" -eq 0 ] && IS_ROOT=1
 
 # ---------- output helpers ---------------------------------------------------
 if [ -t 1 ]; then R=$'\e[31m'; Y=$'\e[33m'; G=$'\e[32m'; B=$'\e[1m'; N=$'\e[0m'; else R=; Y=; G=; B=; N=; fi
-WHERE=""; : > "$TMP/pending"
-# a sub-heading prints only once something is listed under it (kept in a file so pipelines/subshells see it too)
-flush()   { [ -s "$TMP/pending" ] || return 0; local p; p=$(cat "$TMP/pending"); : > "$TMP/pending"; out ""; out "$p"; }
-out()     { flush; printf '%s\n' "$*" | tee -a "$REPORT"; }
-section() { : > "$TMP/pending"; WHERE="${*#[0-9]. }"; out ""; out "${B}=== $* ===${N}"; }
+WHERE=""; : > "$TMP/pending"; : > "$TMP/psec"
+# Quiet by default: only problems print. Section and sub-headings appear only once something is listed
+# under them, and [info] lines (plus the detail lines that follow them) show only with VERBOSE=1.
+# State lives in files so pipelines and subshells see it too.
+V()       { [ "${VERBOSE:-0}" = 1 ]; }
+emit()    { printf '\n%s\n' "$1" | tee -a "$REPORT"; }
+flush()   { local p
+            if [ -s "$TMP/psec" ]; then p=$(cat "$TMP/psec"); : > "$TMP/psec"; emit "$p"; fi
+            if [ -s "$TMP/pending" ]; then p=$(cat "$TMP/pending"); : > "$TMP/pending"; emit "$p"; fi; return 0; }
+out()     { rm -f "$TMP/hide"; flush; printf '%s\n' "$*" | tee -a "$REPORT"; }
+section() { : > "$TMP/pending"; WHERE="${*#[0-9]. }"; printf '%s' "${B}=== $* ===${N}" > "$TMP/psec"; }
 sub()     { printf '%s' "${B}--- $* ---${N}" > "$TMP/pending"; case "$*" in App:*) WHERE="${*##*/}";; esac; }
-ok()      { NPASS=$((NPASS+1)); [ "${VERBOSE:-0}" = 1 ] && out "  ${G}[ OK ]${N} $*"; return 0; }   # passed checks are counted, shown only with VERBOSE=1
+ok()      { NPASS=$((NPASS+1)); V && out "  ${G}[ OK ]${N} $*"; return 0; }   # passed checks are counted, shown only with VERBOSE=1
 warn()    { NWARN=$((NWARN+1)); out "  ${Y}[WARN]${N} $*"; echo "WARN  $WHERE: $*" >> "$TMP/actions"; }   # also collected for the to-do list
 bad()     { NFAIL=$((NFAIL+1)); out "  ${R}[FAIL]${N} $*"; echo "FAIL  $WHERE: $*" >> "$TMP/actions"; }
-note()    { out "  [info] $*"; }
-indent()  { flush; sed 's/^/         /' | tee -a "$REPORT"; }
+note()    { if V; then out "  [info] $*"; else : > "$TMP/hide"; fi; }   # context only
+keep()    { out "  [info] $*"; }                                         # context worth seeing every run
+detail()  { [ -e "$TMP/hide" ] || out "$*"; }                            # a line belonging to the last note
+indent()  { if [ -e "$TMP/hide" ]; then cat > /dev/null; else flush; sed 's/^/         /' | tee -a "$REPORT"; fi; }
 top()     { sort | uniq -c | sort -rn | head -n "${1:-5}"; }
 cnt()     { grep -ciE -- "$1" "$2" 2>/dev/null || true; }
 have()    { command -v "$1" >/dev/null 2>&1; }
@@ -297,7 +305,7 @@ audit_app() {
       -o -type f -name '*.php' -mtime "-$DAYS" -print 2>/dev/null > "$TMP/f4"
     n=$(wc -l < "$TMP/f4")
     if [ "$n" -gt 0 ]; then
-      note "$n PHP file(s) modified in the last $DAYS day(s) - confirm these match your deployments:"; head -n 10 "$TMP/f4" | indent
+      keep "$n PHP file(s) modified in the last $DAYS day(s) - confirm these match your deployments:"; head -n 10 "$TMP/f4" | indent
     fi
   fi
 
@@ -370,10 +378,12 @@ else
 fi
 
 if [ "$TOTAL" -gt 0 ]; then
+  if V; then   # traffic table: context only
   sub "Requests per domain"
   out "$(printf '         %-42s %9s %8s %8s' DOMAIN REQUESTS 4xx 5xx)"
   awk '{r[$1]++; if($10>=500)e5[$1]++; else if($10>=400)e4[$1]++}
        END{for(v in r) printf "%-42s %9d %8d %8d\n", v, r[v], e4[v]+0, e5[v]+0}' "$ACC" | sort -k2,2 -rn | head -n 40 | indent
+  fi
 
   sub "Attack attempts (requests made, not necessarily successful)"
   P_SQLI='union(\+|%20| )+(all(\+|%20| )+)?select|information_schema|sleep\(|benchmark\(|%27(\+|%20)*(or|and)(\+|%20)|waitfor(\+|%20)delay'
@@ -529,17 +539,21 @@ if [ $IS_ROOT -eq 1 ]; then
       note "cPanel/WHM/webmail: $n failed logins ($WLABEL). By service:"
       grep -aoE '\[(cpaneld|whostmgrd|webmaild|cpdavd)\]' "$TMP/cplf" \
         | sed -e 's/\[cpaneld\]/cPanel (2083)/' -e 's/\[whostmgrd\]/WHM (2087)/' -e 's/\[webmaild\]/Webmail (2096)/' -e 's/\[cpdavd\]/Calendar-contacts (2080)/' | top 5 | indent
-      out "         Top source IPs:"
+      detail "         Top source IPs:"
       grep -aoE '[0-9]{1,3}(\.[0-9]{1,3}){3}' "$TMP/cplf" | top 5 | indent
-      out "         Per day:"
+      detail "         Per day:"
       cut -c2-11 "$TMP/cplf" | grep -E '^[0-9]{4}-' | sort | uniq -c | tail -n 7 | indent
-      grep -aq '127\.0\.0\.1' "$TMP/cplf" && out "         (127.0.0.1 = logins through cpanel./webmail. addresses on port 443, or a script on this server)"
+      grep -aq '127\.0\.0\.1' "$TMP/cplf" && detail "         (127.0.0.1 = logins through cpanel./webmail. addresses on port 443, or a script on this server)"
     else ok "cPanel/WHM/webmail: no failed logins ($WLABEL)"; fi
     SL=/usr/local/cpanel/logs/session_log
     if [ -r "$SL" ]; then
       windowed "$SL" "$TMP/d_iso" "$TMP/sl" '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} '
       grep -a 'whostmgrd' "$TMP/sl" | awk '{for(i=2;i<NF;i++) if($i=="NEW"){split($(i+1),u,":"); print u[1], "from", $(i-1)}}' | top 10 > "$TMP/whm"
-      [ -s "$TMP/whm" ] && { note "WHM sessions opened ($WLABEL) - confirm they are yours (count, user, IP):"; indent < "$TMP/whm"; }
+      if [ -s "$TMP/whm" ] && [ -n "${KNOWN_IPS:-}" ]; then   # only logins from IPs you have not listed are news
+        tr " " "\n" <<< "$KNOWN_IPS" | grep . > "$TMP/kip"; grep -vwFf "$TMP/kip" "$TMP/whm" > "$TMP/whmu" || true
+        if [ -s "$TMP/whmu" ]; then warn "WHM sessions from IPs not in KNOWN_IPS ($WLABEL) - confirm they are yours (count, user, IP):"; indent < "$TMP/whmu"
+        else ok "WHM sessions only from KNOWN_IPS"; fi
+      elif [ -s "$TMP/whm" ]; then note "WHM sessions opened ($WLABEL) - set KNOWN_IPS to flag only unknown ones (count, user, IP):"; indent < "$TMP/whm"; fi
     fi
   fi
   [ -r /var/log/lfd.log ] && note "CSF/LFD blocks logged: $(grep -ac 'Blocked in csf' /var/log/lfd.log || true)"
@@ -723,7 +737,7 @@ if have sar && [ -n "$SADIR" ]; then
       col && $1 ~ /^[0-9][0-9]:[0-9][0-9]/ && $col ~ /^[0-9.]+$/ { print $col, substr($1,1,5) }' | sort -k1,1 $s | head -n 1
   }
   nd=7; [ "$DAYS" != all ] && [ "$DAYS" -lt 7 ] && nd=$DAYS
-  out "$(printf '         %-11s %-22s %-22s %-24s %-18s' DAY 'CPU BUSIEST' 'LOAD PEAK (1 min)' 'MEMORY LOWEST AVAILABLE' 'SWAP PEAK')"
+  V && out "$(printf '         %-11s %-22s %-22s %-24s %-18s' DAY 'CPU BUSIEST' 'LOAD PEAK (1 min)' 'MEMORY LOWEST AVAILABLE' 'SWAP PEAK')"
   for i in $(seq 0 $((nd-1))); do
     f="$SADIR/sa$(date -d "-$i day" +%d)"; [ -r "$f" ] || continue
     day=$(date -d "-$i day" +%Y-%m-%d)
@@ -735,7 +749,7 @@ if have sar && [ -n "$SADIR" ]; then
     busy=$(awk -v i="$idle" 'BEGIN{printf "%.0f", 100-i}')
     avmb=$(awk -v a="${av:-0}" 'BEGIN{printf "%d", a/1024}')
     memtxt="n/a"; [ -n "${av:-}" ] && memtxt="${avmb} MB at ${t_av}"
-    out "$(printf '         %-11s %-22s %-22s %-24s %-18s' "$day" "${busy}% at ${t_cpu}" "${ld:-?} at ${t_ld:-?}" "$memtxt" "${sw:-0}% at ${t_sw:-?}")"
+    V && out "$(printf '         %-11s %-22s %-22s %-24s %-18s' "$day" "${busy}% at ${t_cpu}" "${ld:-?} at ${t_ld:-?}" "$memtxt" "${sw:-0}% at ${t_sw:-?}")"
     [ "$busy" -ge 90 ] && warn "$day: CPU reached ${busy}% at $t_cpu"
     awk -v l="${ld:-0}" -v c="$CORES" 'BEGIN{exit !(l>c)}' && warn "$day: load ${ld} exceeded the $CORES core(s) at $t_ld - requests were queueing"
     [ -n "${av:-}" ] && [ "${MEM_MB:-0}" -gt 0 ] && [ "$avmb" -lt $((MEM_MB/10)) ] && warn "$day: only ${avmb} MB memory left at $t_av (under 10% of RAM)"
@@ -789,6 +803,7 @@ n=$(cnt 'Too many connections|SQLSTATE\[HY000\] \[1040\]' "$TMP/lv_all")
 n=$(cnt 'Allowed memory size' "$TMP/lv_all")
 [ "$n" -gt 0 ] && warn "PHP memory_limit exhausted $n time(s) in Laravel"
 
+if V; then   # context only
 sub "Busiest hours"
 if [ "$TOTAL" -gt 0 ]; then
   out "         Requests per hour (top 5):"
@@ -801,6 +816,7 @@ if [ -s "$TMP/lv_all" ]; then
   [ -s "$TMP/hl" ] && { out "         Laravel errors per hour (top 5):"; indent < "$TMP/hl"; }
 fi
 note "when the same hour tops requests, errors and CPU/memory, that is your capacity limit"
+fi
 
 # =============================================================================
 section "Summary"
@@ -826,10 +842,12 @@ else cp "$TMP/todo_now" "$TMP/new"; : > "$TMP/fixed"; fi
 NNEW=$(grep -c . "$TMP/new" || true); NKNOWN=$(grep -c . "$TMP/known" || true); NFIXED=$(grep -c . "$TMP/fixed" || true)
 { cp "$TMP/todo_now" "$STATE" && chmod 600 "$STATE"; } 2>/dev/null || :
 
+# summary lines: just what the item is - the advice after " - " and the git status legend stay in the details
+short() { sed -E 's/ - .*$//; s/ \(M = [^)]*\)//; s/:$//; s/^/  /'; }
 changes() {   # the part of the report that differs from yesterday
-  [ -s "$TMP/new" ] && { echo "NEW since the last run:"; sed 's/^/  /' "$TMP/new"; echo; }
-  [ -s "$TMP/fixed" ] && { echo "FIXED since the last run:"; sed 's/^/  /' "$TMP/fixed"; echo; }
-  [ -s "$TMP/known" ] && { echo "Still open from before ($NKNOWN, details below):"; cut -c1-110 "$TMP/known" | sed 's/^/  /'; echo; }
+  [ -s "$TMP/new" ] && { echo "NEW since the last run:"; short < "$TMP/new"; echo; }
+  [ -s "$TMP/fixed" ] && { echo "FIXED since the last run:"; short < "$TMP/fixed"; echo; }
+  [ -s "$TMP/known" ] && { echo "Still open from before ($NKNOWN, details below):"; short < "$TMP/known"; echo; }
   [ -s "$TMP/todo_now" ] || echo "Nothing to do - all checks passed."
 }
 # terminal/file only: the email already opens with this list
